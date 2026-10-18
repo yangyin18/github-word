@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 数据库
+*.db
+*.sqlite3
+
+# 环境变量与密钥
+.env
+*.pem
+
+# Node
+node_modules/
+dist/
+
+# IDE
+.vscode/
+.idea/
+.trae-html-share-packages/
+
+# 日志
+*.log
+
+# 临时测试脚本
+backend/check_*.py
+backend/test_*.py
+backend/find_issue.py
