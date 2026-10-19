@@ -49,6 +49,24 @@ class GitHubAppAuth:
             resp.raise_for_status()
             return resp.json()["token"]
 
+    async def get_first_installation_id(self) -> int:
+        """获取 App 的第一个安装 ID（用于未指定 installation 时的默认鉴权）。"""
+        jwt_token = self._make_jwt()
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://api.github.com/app/installations",
+                headers={
+                    "Authorization": f"Bearer {jwt_token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+            resp.raise_for_status()
+            installations = resp.json()
+            if installations:
+                return installations[0]["id"]
+        return None
+
 
 def verify_signature(payload_body: bytes, signature_header: str, secret: str) -> bool:
     """校验 GitHub Webhook 签名 (X-Hub-Signature-256)。"""

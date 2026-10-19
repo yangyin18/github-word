@@ -43,9 +43,15 @@ class GitHubService:
 
     async def _auth_headers(self, installation_id: int = None) -> dict:
         """获取鉴权头：优先 App Installation Token，回退 PAT。"""
-        if installation_id and self._app_auth.enabled:
-            token = await self._app_auth.get_installation_token(installation_id)
-            return {"Authorization": f"Bearer {token}"}
+        if self._app_auth.enabled:
+            if not installation_id:
+                # 未指定 installation 时，取第一个安装的 token
+                installation_id = await self._app_auth.get_first_installation_id()
+            if installation_id:
+                token = await self._app_auth.get_installation_token(installation_id)
+                return {"Authorization": f"Bearer {token}"}
+        if settings.github_token:
+            return {"Authorization": f"Bearer {settings.github_token}"}
         return {}
 
     def parse_url(self, url: str) -> dict:
@@ -75,7 +81,8 @@ class GitHubService:
 
     async def _check_repo_public(self, repo: str):
         """校验仓库是否公开。"""
-        resp = await self.client.get(f"/repos/{repo}")
+        headers = await self._auth_headers()
+        resp = await self.client.get(f"/repos/{repo}", headers=headers)
         if resp.status_code == 404:
             raise GitHubError("仓库不存在或无权限访问", 404)
         if resp.status_code == 403:
@@ -98,10 +105,11 @@ class GitHubService:
         repo = resource["repo"]
         await self._check_repo_public(repo)
 
+        headers = await self._auth_headers()
         rtype = resource["type"]
         if rtype in (ResourceType.ISSUE, ResourceType.PULL_REQUEST):
             number = resource["number"]
-            resp = await self.client.get(f"/repos/{repo}/issues/{number}")
+            resp = await self.client.get(f"/repos/{repo}/issues/{number}", headers=headers)
             self._check_resp(resp)
             data = resp.json()
             title = data.get("title", "")
@@ -109,7 +117,7 @@ class GitHubService:
             return f"# {title}\n\n{body}"
 
         if rtype == ResourceType.README:
-            resp = await self.client.get(f"/repos/{repo}/readme")
+            resp = await self.client.get(f"/repos/{repo}/readme", headers=headers)
             self._check_resp(resp)
             content_b64 = resp.json().get("content", "")
             return base64.b64decode(content_b64).decode("utf-8")

@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     github_webhook_secret: str = ""
     github_app_id: int = 0
     github_app_private_key_path: str = ""
+    # GitHub OAuth（用户登录，一键提 PR）
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    github_oauth_callback_url: str = "http://localhost:8000/api/auth/callback"
+    session_secret: str = "change-me-in-production-please-use-random-string"
     # 翻译引擎
     translator_provider: str = "mock"
     google_api_key: str = ""

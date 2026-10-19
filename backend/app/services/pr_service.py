@@ -1,14 +1,42 @@
 """PR 翻译服务：识别翻译请求、触发翻译、回写译文评论。"""
+import logging
 import re
+from datetime import datetime, timedelta
+
 from sqlalchemy.orm import Session
+
+from app.database import SessionLocal
+from app.models.task import Task, TaskStatus
 from app.services.task_service import TaskService
 from app.services.github_service import GitHubService
-from app.models.task import ResourceType
 
 # 翻译请求评论格式：/translate [目标语言]
 TRANSLATE_PATTERN = re.compile(r"^/translate(?:\s+(\w{2}))?\s*$", re.MULTILINE)
 
 TRANSLATION_COMMENT_HEADER = "<!-- github-translation-bot -->"
+
+# 防重窗口：同资源同语言在该时间内的进行中任务视为重复
+DEDUP_WINDOW_MINUTES = 10
+
+logger = logging.getLogger(__name__)
+
+# 进行中的任务状态
+_ACTIVE_STATUSES = (
+    TaskStatus.CREATED, TaskStatus.FETCHING, TaskStatus.FETCHED,
+    TaskStatus.PARSING, TaskStatus.TRANSLATING,
+)
+
+
+async def run_translation_job(repo: str, pr_number: int, target_lang: str, installation_id: int = None):
+    """后台任务入口：自建数据库会话，执行翻译并回写评论。"""
+    db = SessionLocal()
+    try:
+        service = PRService(db)
+        await service.run_translation(repo, pr_number, target_lang, installation_id)
+    except Exception:
+        logger.exception("后台翻译任务失败 repo=%s pr=%s", repo, pr_number)
+    finally:
+        db.close()
 
 
 class PRService:
@@ -24,47 +52,27 @@ class PRService:
             return None
         return m.group(1) or "zh"
 
-    async def handle_pr_event(self, payload: dict, installation_id: int = None):
-        """处理 pull_request 事件（opened / synchronize）。"""
-        action = payload.get("action")
-        if action not in ("opened", "synchronize"):
-            return
-
-        pr = payload.get("pull_request", {})
-        repo = payload["repository"]["full_name"]
-        pr_number = pr["number"]
-        # 仅当 PR 描述中包含 /translate 时自动触发
-        body = pr.get("body") or ""
-        target_lang = self.parse_translate_request(body)
-        if not target_lang:
-            return
-
-        await self._run_translation(repo, pr_number, target_lang, installation_id)
-
-    async def handle_comment_event(self, payload: dict, installation_id: int = None):
-        """处理 issue_comment 事件（仅 PR 评论）。"""
-        action = payload.get("action")
-        if action != "created":
-            return
-
-        comment = payload.get("comment", {})
-        body = comment.get("body") or ""
-        target_lang = self.parse_translate_request(body)
-        if not target_lang:
-            return
-
-        repo = payload["repository"]["full_name"]
-        # PR 的 issue 评论事件中，pull_request 字段存在则为 PR
-        pr_data = payload.get("issue", {}).get("pull_request")
-        if not pr_data:
-            return  # 普通 Issue 评论，忽略
-        pr_number = payload["issue"]["number"]
-
-        await self._run_translation(repo, pr_number, target_lang, installation_id)
-
-    async def _run_translation(self, repo: str, pr_number: int, target_lang: str, installation_id: int = None):
-        """执行翻译并回写评论。"""
+    async def run_translation(self, repo: str, pr_number: int, target_lang: str, installation_id: int = None):
+        """执行翻译并回写评论（带防重检查）。"""
         resource_url = f"https://github.com/{repo}/pull/{pr_number}"
+
+        # 防重：同资源同语言已有进行中任务（10 分钟窗口内）则跳过，避免 webhook 重试导致重复翻译
+        cutoff = datetime.utcnow() - timedelta(minutes=DEDUP_WINDOW_MINUTES)
+        active = (
+            self.db.query(Task)
+            .filter(
+                Task.resource_url == resource_url,
+                Task.target_lang == target_lang,
+                Task.status.in_(_ACTIVE_STATUSES),
+                Task.updated_at >= cutoff,
+            )
+            .first()
+        )
+        if active:
+            logger.info("跳过重复翻译请求 repo=%s pr=%s lang=%s（已有进行中任务 %s）",
+                        repo, pr_number, target_lang, active.id)
+            return
+
         try:
             task = self.task_service.create_task(resource_url, target_lang, "auto")
         except ValueError as e:
@@ -74,7 +82,6 @@ class PRService:
                 pass
             return
 
-        # 同步等待翻译完成（PR 场景下需要拿到结果再发评论）
         await self.task_service.process_task(task.id)
 
         # 获取译文
@@ -85,8 +92,7 @@ class PRService:
         try:
             await self._post_or_update_comment(repo, pr_number, comment_body, installation_id)
         except Exception as e:
-            import logging
-            logging.warning(f"发布 PR 评论失败（task={task.id}）: {e}")
+            logger.warning(f"发布 PR 评论失败（task={task.id}）: {e}")
 
     async def _post_or_update_comment(self, repo: str, pr_number: int, body: str, installation_id: int = None):
         """发布评论，若已有 bot 评论则更新。"""

@@ -8,6 +8,7 @@ from app.services.github_service import GitHubService, GitHubError
 from app.services.parser_service import ParserService
 from app.services.assembler_service import AssemblerService
 from app.services.glossary_service import GlossaryService
+from app.services.translation_cache import TranslationCacheService
 from app.services.translator import get_translator
 from app.config import MAX_SOURCE_SIZE
 
@@ -73,26 +74,57 @@ class TaskService:
                 ))
             self.segment_repo.bulk_create(segments)
 
-            # 3. 翻译
+            # 3. 翻译：缓存命中直接复用，未命中的去重后一次批量调用
             self.task_repo.update_status(task_id, TaskStatus.TRANSLATING)
             translator = get_translator()
             glossary = GlossaryService(self.db)
+            cache_svc = TranslationCacheService(self.db)
+            # 术语表：注入提示词约束译名，同时纳入缓存键（术语表变更后缓存自动失效）
+            terms = glossary.get_terms_dict(task.source_lang, task.target_lang) if task.source_lang != "auto" else {}
+            glossary_kw = terms or None
 
             translatable_segs = [s for s in segments if s.translatable]
-            failed_count = 0
+            texts = [s.source_text for s in translatable_segs]
 
-            for seg in translatable_segs:
+            translation_map = cache_svc.get_many(texts, task.source_lang, task.target_lang, glossary_kw)
+            unique_missing = list(dict.fromkeys(t for t in texts if t not in translation_map))
+
+            if unique_missing:
                 try:
-                    translated = await translator.translate(
-                        seg.source_text, task.source_lang, task.target_lang
+                    batch_results = await translator.translate_batch(
+                        unique_missing, task.source_lang, task.target_lang, glossary_kw
                     )
-                    # 术语后处理
-                    if task.source_lang != "auto":
-                        translated = glossary.apply(translated, task.source_lang, task.target_lang)
-                    self.segment_repo.update_translation(seg.id, translated, SegmentStatus.TRANSLATED)
-                except Exception as e:
-                    self.segment_repo.mark_failed(seg.id, str(e))
+                except Exception:
+                    batch_results = None  # 整批失败：回退逐条
+                if batch_results is None:
+                    batch_results = []
+                    for t in unique_missing:
+                        try:
+                            batch_results.append(await translator.translate(
+                                t, task.source_lang, task.target_lang, glossary_kw
+                            ))
+                        except Exception:
+                            batch_results.append(None)
+
+                new_map = {t: r for t, r in zip(unique_missing, batch_results) if r is not None}
+                if new_map:
+                    cache_svc.put_many(
+                        new_map, task.source_lang, task.target_lang,
+                        model=getattr(translator, "model", None), glossary=glossary_kw,
+                    )
+                    translation_map.update(new_map)
+
+            failed_count = 0
+            for seg in translatable_segs:
+                translated = translation_map.get(seg.source_text)
+                if translated is None:
+                    self.segment_repo.mark_failed(seg.id, "翻译失败")
                     failed_count += 1
+                    continue
+                # 术语后处理（缓存存的是 LLM 原始输出，术语表随时可调整生效）
+                if task.source_lang != "auto":
+                    translated = glossary.apply(translated, task.source_lang, task.target_lang)
+                self.segment_repo.update_translation(seg.id, translated, SegmentStatus.TRANSLATED)
 
             # 4. 完成状态
             if failed_count == 0:
@@ -126,7 +158,7 @@ class TaskService:
         return AssemblerService.assemble(segments)
 
     async def retry_failed(self, task_id: str) -> int:
-        """重试失败分段，返回重试数量。"""
+        """重试失败分段（走缓存 + 批量翻译），返回重试数量。"""
         failed = self.segment_repo.get_failed(task_id)
         if not failed:
             return 0
@@ -134,19 +166,48 @@ class TaskService:
         task = self.task_repo.get(task_id)
         translator = get_translator()
         glossary = GlossaryService(self.db)
-        retried = 0
+        cache_svc = TranslationCacheService(self.db)
+        terms = glossary.get_terms_dict(task.source_lang, task.target_lang) if task.source_lang != "auto" else {}
+        glossary_kw = terms or None
 
-        for seg in failed:
+        texts = [s.source_text for s in failed]
+        translation_map = cache_svc.get_many(texts, task.source_lang, task.target_lang, glossary_kw)
+        unique_missing = list(dict.fromkeys(t for t in texts if t not in translation_map))
+
+        if unique_missing:
             try:
-                translated = await translator.translate(
-                    seg.source_text, task.source_lang, task.target_lang
+                batch_results = await translator.translate_batch(
+                    unique_missing, task.source_lang, task.target_lang, glossary_kw
                 )
-                if task.source_lang != "auto":
-                    translated = glossary.apply(translated, task.source_lang, task.target_lang)
-                self.segment_repo.update_translation(seg.id, translated, SegmentStatus.TRANSLATED)
-                retried += 1
-            except Exception as e:
-                self.segment_repo.mark_failed(seg.id, str(e))
+            except Exception:
+                batch_results = None
+            if batch_results is None:
+                batch_results = []
+                for t in unique_missing:
+                    try:
+                        batch_results.append(await translator.translate(
+                            t, task.source_lang, task.target_lang, glossary_kw
+                        ))
+                    except Exception:
+                        batch_results.append(None)
+
+            new_map = {t: r for t, r in zip(unique_missing, batch_results) if r is not None}
+            if new_map:
+                cache_svc.put_many(
+                    new_map, task.source_lang, task.target_lang,
+                    model=getattr(translator, "model", None), glossary=glossary_kw,
+                )
+                translation_map.update(new_map)
+
+        retried = 0
+        for seg in failed:
+            translated = translation_map.get(seg.source_text)
+            if translated is None:
+                continue
+            if task.source_lang != "auto":
+                translated = glossary.apply(translated, task.source_lang, task.target_lang)
+            self.segment_repo.update_translation(seg.id, translated, SegmentStatus.TRANSLATED)
+            retried += 1
 
         # 重新评估任务状态
         segments = self.segment_repo.get_by_task(task_id)

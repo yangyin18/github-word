@@ -21,5 +21,5 @@ def get_db():
 def init_db():
     """创建所有表。"""
     # 导入模型以注册到 Base.metadata
-    from app.models import task, segment, glossary  # noqa: F401
+    from app.models import task, segment, glossary, user, translation_record, translation_cache  # noqa: F401
     Base.metadata.create_all(bind=engine)

@@ -3,6 +3,7 @@ import axios from 'axios'
 const api = axios.create({
   baseURL: '/api',
   timeout: 30000,
+  withCredentials: true,
 })
 
 export interface Language {
@@ -52,6 +53,32 @@ export interface SegmentListResponse {
   segments: Segment[]
 }
 
+export interface Repo {
+  id: number
+  name: string
+  full_name: string
+  private: boolean
+  default_branch: string
+  description: string | null
+  html_url: string
+  updated_at: string
+  language: string | null
+}
+
+export interface RepoItem {
+  name: string
+  path: string
+  type: string
+  size: number
+}
+
+export interface UserInfo {
+  login: string
+  name: string
+  avatar_url: string
+  html_url: string
+}
+
 export const languagesApi = {
   list: () => api.get<{ source_languages: Language[]; target_languages: Language[] }>('/languages'),
 }
@@ -64,4 +91,33 @@ export const tasksApi = {
   updateSegment: (taskId: string, segId: string, translated_text: string) =>
     api.put<Segment>(`/tasks/${taskId}/segments/${segId}`, { translated_text }),
   retry: (id: string) => api.post<{ retried_count: number; status: string }>(`/tasks/${id}/retry`),
+}
+
+export const authApi = {
+  me: () => api.get<{ logged_in: boolean; user: UserInfo }>('/auth/me'),
+  logout: () => api.post('/auth/logout'),
+}
+
+export const reposApi = {
+  list: (page = 1, perPage = 50) =>
+    api.get<{ repos: Repo[] }>('/repos', { params: { page, per_page: perPage } }),
+  contents: (owner: string, repo: string, path = '') =>
+    api.get<{ type: string; items?: RepoItem[]; content?: string; sha?: string; name?: string; path?: string }>(
+      `/repos/${owner}/${repo}/contents/${path}`,
+    ),
+}
+
+export const translateApi = {
+  // 翻译需要多次 LLM 调用，耗时远超普通请求，单独放宽到 5 分钟
+  text: (content: string, targetLang: string, sourceLang = 'auto', resourceUrl?: string) =>
+    api.post<{ translated: string; record_id?: string }>(
+      '/translate',
+      { content, target_lang: targetLang, source_lang: sourceLang, resource_url: resourceUrl },
+      { timeout: 300000 },
+    ),
+}
+
+export const prApi = {
+  create: (data: { repo: string; path: string; content: string; target_lang: string; original_sha?: string }) =>
+    api.post<{ pr_url: string; pr_number: number; branch: string; translated_path: string }>('/pr/create', data),
 }

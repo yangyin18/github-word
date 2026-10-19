@@ -61,11 +61,12 @@ class ParserService:
                 i += 1
                 continue
 
-            # 标题
+            # 标题（层级记录在 segment_type 中：heading_1 ~ heading_6）
             if token.type == "heading_open":
                 inline = tokens[i + 1] if i + 1 < n else None
                 text = inline.content if inline else ""
-                segments.append(ParsedSegment(SegmentType.TEXT, text, True))
+                level = int(token.tag[1]) if token.tag and token.tag[1].isdigit() else 1
+                segments.append(ParsedSegment(f"heading_{level}", text, True))
                 i += 3  # open + inline + close
                 continue
 
