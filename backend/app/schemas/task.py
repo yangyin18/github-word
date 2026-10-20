@@ -26,6 +26,9 @@ class TaskResponse(BaseModel):
     total_segments: int = 0
     translated_segments: int = 0
     failed_segments: int = 0
+    # 翻译阶段实时进度（旧任务可能为 NULL）
+    translated_count: Optional[int] = None
+    total_count: Optional[int] = None
     error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime

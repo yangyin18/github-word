@@ -30,3 +30,11 @@ class TaskRepo:
         if task:
             task.source_content = content
             self.db.commit()
+
+    def update_progress(self, task_id: str, translated_count: int, total_count: int):
+        """更新翻译阶段实时进度。"""
+        task = self.get(task_id)
+        if task:
+            task.translated_count = translated_count
+            task.total_count = total_count
+            self.db.commit()

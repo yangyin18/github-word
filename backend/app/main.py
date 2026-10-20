@@ -1,4 +1,6 @@
 """FastAPI 应用入口。"""
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -7,7 +9,14 @@ from app.config import settings
 from app.utils.errors import register_error_handlers
 from app.routers import tasks, languages, webhook, auth, repos, pr as pr_router, translate
 
-app = FastAPI(title="GitHub 翻译工具 API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="GitHub 翻译工具 API", version="0.1.0", lifespan=lifespan)
 
 # Session（OAuth 登录态）
 app.add_middleware(SessionMiddleware, secret_key=settings.session_secret)
@@ -32,11 +41,6 @@ app.include_router(auth.router)
 app.include_router(repos.router)
 app.include_router(pr_router.router)
 app.include_router(translate.router)
-
-
-@app.on_event("startup")
-def on_startup():
-    init_db()
 
 
 @app.get("/api/health")

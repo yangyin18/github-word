@@ -51,6 +51,7 @@ function goManual() {
         用 GitHub 登录
       </button>
       <p class="tip">首次使用会请求仓库读写权限</p>
+      <p class="tip">网页翻译与一键提 PR 无需安装 GitHub App；仅「PR 评论自动翻译」需要仓库安装本应用</p>
       <button class="btn-link" @click="goManual">没有账号？用 URL 手动翻译</button>
     </div>
 

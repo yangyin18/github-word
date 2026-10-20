@@ -38,6 +38,9 @@ class Task(Base):
     status = Column(String(20), nullable=False, default=TaskStatus.CREATED)
     source_content = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
+    # 翻译阶段实时进度（已译/总可译段数），供前端展示真实百分比
+    translated_count = Column(Integer, nullable=True)
+    total_count = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

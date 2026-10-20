@@ -18,6 +18,12 @@ const isFinished = computed(() =>
   task.value ? ['completed', 'partial_failed', 'failed'].includes(task.value.status) : false
 )
 
+const progressPct = computed(() => {
+  const t = task.value
+  if (!t || !t.total_count) return 0
+  return Math.min(100, Math.round(((t.translated_count ?? 0) / t.total_count) * 100))
+})
+
 const statusText: Record<string, string> = {
   created: '已创建',
   fetching: '抓取中',
@@ -101,6 +107,14 @@ async function editSegment(seg: Segment) {
         <span class="status" :class="task.status">{{ statusText[task.status] || task.status }}</span>
         <span>{{ task.resource_type }}</span>
         <a :href="task.resource_url" target="_blank">查看源资源</a>
+      </div>
+      <div v-if="!isFinished && task.total_count" class="progress-wrap">
+        <div class="progress-bar">
+          <div class="progress-fill" :style="{ width: progressPct + '%' }"></div>
+        </div>
+        <span class="progress-text">
+          已译 {{ task.translated_count ?? 0 }} / {{ task.total_count }} 段（{{ progressPct }}%）
+        </span>
       </div>
       <div class="stats">
         分段 {{ task.total_segments }} · 已译 {{ task.translated_segments }} · 失败 {{ task.failed_segments }}

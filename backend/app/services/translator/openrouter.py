@@ -124,12 +124,12 @@ class OpenRouterTranslator(BaseTranslator):
                 content = resp.json()["choices"][0]["message"]["content"]
         except Exception:
             # 请求失败：回退逐条，由调用方继续处理
-            return [await self.translate(t, source_lang, target_lang) for t in texts]
+            return [await self.translate(t, source_lang, target_lang, glossary) for t in texts]
 
         parsed = self._parse_batch_response(content, len(texts))
         if parsed is None:
             # 返回段落数不匹配：回退逐条重试
-            return [await self.translate(t, source_lang, target_lang) for t in texts]
+            return [await self.translate(t, source_lang, target_lang, glossary) for t in texts]
         return parsed
 
     @staticmethod

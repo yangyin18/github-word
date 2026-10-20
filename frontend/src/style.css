@@ -149,6 +149,36 @@ body {
   margin-bottom: 16px;
 }
 
+.progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.progress-bar {
+  flex: 1;
+  max-width: 420px;
+  height: 10px;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1f6feb, #58a6ff);
+  border-radius: 5px;
+  transition: width .6s ease;
+}
+
+.progress-text {
+  color: #8b949e;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .actions {
   display: flex;
   gap: 10px;

@@ -12,6 +12,7 @@ from app.services.parser_service import ParserService
 from app.services.assembler_service import AssemblerService
 from app.services.glossary_service import GlossaryService
 from app.services.translation_cache import TranslationCacheService
+from app.services.batch_translate import translate_missing
 from app.services.translator import get_translator
 from app.models.segment import Segment, SegmentType, SegmentStatus
 from app.models.user import User
@@ -75,34 +76,16 @@ async def translate_text(req: TranslateRequest, request: Request, db: Session = 
     translatable_positions = [i for i, ps in enumerate(parsed) if ps.translatable]
     texts = [parsed[i].source_text for i in translatable_positions]
 
-    # 1) 缓存命中直接复用，未命中的去重后一次批量调用 LLM
+    # 1) 缓存命中直接复用，未命中的分批调用 LLM（逐批写缓存）
     translation_map = cache_svc.get_many(texts, req.source_lang, req.target_lang, glossary_kw)
     unique_missing = list(dict.fromkeys(t for t in texts if t not in translation_map))
 
     if unique_missing:
-        try:
-            batch_results = await translator.translate_batch(
-                unique_missing, req.source_lang, req.target_lang, glossary_kw
-            )
-        except Exception:
-            batch_results = None  # 整批失败：回退逐条
-        if batch_results is None:
-            batch_results = []
-            for t in unique_missing:
-                try:
-                    batch_results.append(await translator.translate(
-                        t, req.source_lang, req.target_lang, glossary_kw
-                    ))
-                except Exception:
-                    batch_results.append(None)
-
-        new_map = {t: r for t, r in zip(unique_missing, batch_results) if r is not None}
-        if new_map:
-            cache_svc.put_many(
-                new_map, req.source_lang, req.target_lang,
-                model=getattr(translator, "model", None), glossary=glossary_kw,
-            )
-            translation_map.update(new_map)
+        new_map = await translate_missing(
+            translator, cache_svc, unique_missing,
+            req.source_lang, req.target_lang, glossary_kw,
+        )
+        translation_map.update(new_map)
 
     # 2) 回填译文 + 术语后处理
     failed = 0

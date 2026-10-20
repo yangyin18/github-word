@@ -33,6 +33,8 @@ export interface TaskResponse {
   total_segments: number
   translated_segments: number
   failed_segments: number
+  translated_count: number | null
+  total_count: number | null
   error_message: string | null
   created_at: string
   updated_at: string
@@ -107,6 +109,20 @@ export const reposApi = {
     ),
 }
 
+export interface HistoryRecord {
+  id: number
+  resource_url: string | null
+  source_type: string
+  target_lang: string
+  status: string
+  segment_count: number
+  failed_count: number
+  elapsed_ms: number
+  created_at: string | null
+  source_preview: string
+  translated_preview: string
+}
+
 export const translateApi = {
   // 翻译需要多次 LLM 调用，耗时远超普通请求，单独放宽到 5 分钟
   text: (content: string, targetLang: string, sourceLang = 'auto', resourceUrl?: string) =>
@@ -115,6 +131,10 @@ export const translateApi = {
       { content, target_lang: targetLang, source_lang: sourceLang, resource_url: resourceUrl },
       { timeout: 300000 },
     ),
+  history: (limit = 50) =>
+    api.get<{ user: UserInfo; total: number; records: HistoryRecord[] }>('/translate/history', {
+      params: { limit },
+    }),
 }
 
 export const prApi = {

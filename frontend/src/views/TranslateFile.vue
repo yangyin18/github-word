@@ -180,6 +180,7 @@ async function submitPR() {
           {{ submitting ? '提交中...' : '一键提交 PR' }}
         </button>
         <p class="tip">将创建新分支，译文以新文件（如 README.zh.md）提交，不覆盖原文</p>
+        <p class="tip">提 PR 使用你的登录授权，无需安装 GitHub App；「PR 评论自动翻译」功能需要仓库安装本应用</p>
       </div>
     </template>
   </div>

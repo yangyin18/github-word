@@ -31,6 +31,7 @@ async function handleLogout() {
 
       <div class="header-right">
         <template v-if="auth.user">
+          <RouterLink to="/history" class="btn-link">翻译历史</RouterLink>
           <img :src="auth.user.avatar_url" class="avatar" :alt="auth.user.name" />
           <span class="username">{{ auth.user.name || auth.user.login }}</span>
           <button class="btn-link" @click="handleLogout">退出</button>

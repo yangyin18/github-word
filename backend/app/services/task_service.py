@@ -9,6 +9,7 @@ from app.services.parser_service import ParserService
 from app.services.assembler_service import AssemblerService
 from app.services.glossary_service import GlossaryService
 from app.services.translation_cache import TranslationCacheService
+from app.services.batch_translate import translate_missing
 from app.services.translator import get_translator
 from app.config import MAX_SOURCE_SIZE
 
@@ -89,30 +90,21 @@ class TaskService:
             translation_map = cache_svc.get_many(texts, task.source_lang, task.target_lang, glossary_kw)
             unique_missing = list(dict.fromkeys(t for t in texts if t not in translation_map))
 
-            if unique_missing:
-                try:
-                    batch_results = await translator.translate_batch(
-                        unique_missing, task.source_lang, task.target_lang, glossary_kw
-                    )
-                except Exception:
-                    batch_results = None  # 整批失败：回退逐条
-                if batch_results is None:
-                    batch_results = []
-                    for t in unique_missing:
-                        try:
-                            batch_results.append(await translator.translate(
-                                t, task.source_lang, task.target_lang, glossary_kw
-                            ))
-                        except Exception:
-                            batch_results.append(None)
+            # 进度真实化：缓存命中数先落库，逐批翻译完成后再累加
+            total_count = len(texts)
+            resolved_base = total_count - len(unique_missing)
+            self.task_repo.update_progress(task_id, resolved_base, total_count)
 
-                new_map = {t: r for t, r in zip(unique_missing, batch_results) if r is not None}
-                if new_map:
-                    cache_svc.put_many(
-                        new_map, task.source_lang, task.target_lang,
-                        model=getattr(translator, "model", None), glossary=glossary_kw,
-                    )
-                    translation_map.update(new_map)
+            if unique_missing:
+                def _on_progress(resolved: int):
+                    self.task_repo.update_progress(task_id, resolved_base + resolved, total_count)
+
+                new_map = await translate_missing(
+                    translator, cache_svc, unique_missing,
+                    task.source_lang, task.target_lang, glossary_kw,
+                    on_progress=_on_progress,
+                )
+                translation_map.update(new_map)
 
             failed_count = 0
             for seg in translatable_segs:
@@ -175,29 +167,11 @@ class TaskService:
         unique_missing = list(dict.fromkeys(t for t in texts if t not in translation_map))
 
         if unique_missing:
-            try:
-                batch_results = await translator.translate_batch(
-                    unique_missing, task.source_lang, task.target_lang, glossary_kw
-                )
-            except Exception:
-                batch_results = None
-            if batch_results is None:
-                batch_results = []
-                for t in unique_missing:
-                    try:
-                        batch_results.append(await translator.translate(
-                            t, task.source_lang, task.target_lang, glossary_kw
-                        ))
-                    except Exception:
-                        batch_results.append(None)
-
-            new_map = {t: r for t, r in zip(unique_missing, batch_results) if r is not None}
-            if new_map:
-                cache_svc.put_many(
-                    new_map, task.source_lang, task.target_lang,
-                    model=getattr(translator, "model", None), glossary=glossary_kw,
-                )
-                translation_map.update(new_map)
+            new_map = await translate_missing(
+                translator, cache_svc, unique_missing,
+                task.source_lang, task.target_lang, glossary_kw,
+            )
+            translation_map.update(new_map)
 
         retried = 0
         for seg in failed:
